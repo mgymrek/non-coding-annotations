@@ -16,6 +16,7 @@ def main():
     usage = "usage: %prog [options] <model_th> <vcf_file>"
     parser = OptionParser(usage)
     parser.add_option('-f', dest='genome_fasta', default='%s/data/genomes/hg19.fa'%os.environ['BASSETDIR'], help='Genome FASTA from which sequences will be drawn [Default: %default]')
+    parser.add_option('-b', dest='batchsize', default=128, help='Batch size for prediction. [Default: %default]')
     parser.add_option('-i', dest='index_snp', default=False, action='store_true', help='SNPs are labeled with their index SNP as column 6 [Default: %default]')
     parser.add_option('-s', dest='score', default=False, action='store_true', help='SNPs are labeled with scores as column 7 [Default: %default]')
     parser.add_option('-o', dest='out_dir', default='sad', help='Output directory for tables and plots [Default: %default]')
@@ -63,7 +64,7 @@ def main():
 
     model_hdf5_file = '%s/model_out.txt' % options.out_dir
     cuda_str = ""
-    cmd = 'basset_predict.lua -norm %s %s %s/model_in.h5 %s' % (cuda_str, model_th, options.out_dir, model_hdf5_file)
+    cmd = 'basset_predict.lua -batchsize %s -norm %s %s %s/model_in.h5 %s' % (options.batchsize, cuda_str, model_th, options.out_dir, model_hdf5_file)
     if subprocess.call(cmd, shell=True):
         message('Error running basset_predict.lua', 'error')
 
