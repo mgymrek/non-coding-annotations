@@ -1,6 +1,4 @@
-#!/usr/local/bin/python2.7
-
-##!/usr/bin/env python
+#!/usr/bin/env python
 
 import h5py
 from optparse import OptionParser
@@ -9,7 +7,7 @@ import subprocess
 import sys
 
 # Load Basset functions
-sys.path = ["/Users/gymrek/workspace/Basset/src/"] + sys.path
+sys.path = [os.path.join(os.environ["BASSETDIR"], "src")] + sys.path
 import vcf
 from util.utils import message
 
