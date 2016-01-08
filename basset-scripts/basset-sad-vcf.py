@@ -64,7 +64,7 @@ def main():
 
     model_hdf5_file = '%s/model_out.txt' % options.out_dir
     cuda_str = ""
-    cmd = 'basset_predict.lua -batchsize %s -norm %s %s %s/model_in.h5 %s' % (options.batchsize, cuda_str, model_th, options.out_dir, model_hdf5_file)
+    cmd = './basset_predict_local.lua -batchsize %s -norm %s %s %s/model_in.h5 %s' % (options.batchsize, cuda_str, model_th, options.out_dir, model_hdf5_file)
     if subprocess.call(cmd, shell=True):
         message('Error running basset_predict.lua', 'error')
 
