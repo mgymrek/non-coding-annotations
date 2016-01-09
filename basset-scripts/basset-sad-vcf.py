@@ -25,7 +25,6 @@ def prep_snp_seqs(vcf_file, out_dir, seq_len, genome_fasta):
     with open(vcf_file, "r") as f, gzip.open(vcf_file, 'rb') as fz:
         if vcf_file.endswith(".gz"): f = fz
         for line in f:
-            print line
             # Get one hot coded sequence
             snp = vcf.SNP(line)
             seq_vecs, seqs, seq_headers = vcf.snps_seq1([snp], genome_fasta, seq_len)
@@ -77,7 +76,7 @@ def main():
 
     model_hdf5_file = '%s/model_out.txt' % options.out_dir
     cuda_str = ""
-    cmd = './basset_predict_local.lua -batchsize %s -norm %s %s %s/model_in.h5 %s' % (options.batchsize, cuda_str, model_th, options.out_dir, model_hdf5_file)
+    cmd = 'basset_predict_local.lua -batchsize %s -norm %s %s %s/model_in.h5 %s' % (options.batchsize, cuda_str, model_th, options.out_dir, model_hdf5_file)
     if subprocess.call(cmd, shell=True):
         message('Error running basset_predict.lua', 'error')
 
@@ -95,7 +94,9 @@ def main():
     sad_out.write('\t'.join(header_cols)+'\n')
 
     # Read simultaneously from SNP and predictions file
-    snp_reader = open(vcf_file, "r")
+    if vcf_file.endswith(".gz"):
+        snp_reader = gzip.open(vcf_file, "r")
+    else: snp_reader = open(vcf_file, "r")
     snpline = snp_reader.readline().strip()
     while snpline.startswith("#"): snpline = snp_reader.readline().strip()
     pred_reader = open(model_hdf5_file, "r")
