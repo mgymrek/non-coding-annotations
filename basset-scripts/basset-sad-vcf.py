@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+import gzip
 import h5py
 import numpy as np
 from optparse import OptionParser
@@ -21,8 +22,10 @@ def prep_snp_seqs(vcf_file, out_dir, seq_len, genome_fasta):
 
     # Read through VCF
     current_shape = 0 # start off with 0 (init to 1 bc got error otherwise)
-    with open(vcf_file, "r") as f:
+    with open(vcf_file, "r") as f, gzip.open(vcf_file, 'rb') as fz:
+        if vcf_file.endswith(".gz"): f = fz
         for line in f:
+            print line
             # Get one hot coded sequence
             snp = vcf.SNP(line)
             seq_vecs, seqs, seq_headers = vcf.snps_seq1([snp], genome_fasta, seq_len)
@@ -65,7 +68,7 @@ def main():
         prep_snp_seqs(vcf_file, options.out_dir, options.seq_len, options.genome_fasta)
 
     if options.only_gen_inputh5:
-        sys.exit(1)
+        sys.exit(0)
 
     #################################################################
     # predict in Torch
