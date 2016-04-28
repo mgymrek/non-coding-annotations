@@ -13,7 +13,14 @@ sys.path = [os.path.join(os.environ["BASSETDIR"], "src")] + sys.path
 import vcf
 from util.utils import message
 
-def prep_snp_seqs(vcf_file, out_dir, seq_len, genome_fasta):
+def torch_predict(out_dir, batchsize, model_th, model_hdf5_file):
+    message('predict in torch')
+    cuda_str = ""
+    cmd = 'basset_predict_local.lua -batchsize %s -norm %s %s %s/model_in.h5 %s' % (batchsize, cuda_str, model_th, out_dir, model_hdf5_file)
+    if subprocess.call(cmd, shell=True):
+        message('Error running basset_predict.lua', 'error')
+
+def prep_snp_seqs(vcf_file, out_dir, seq_len, genome_fasta, from_=None, to_=None):
     message('prep SNP sequences')
 
     # Prepare hdf5 file
@@ -27,6 +34,8 @@ def prep_snp_seqs(vcf_file, out_dir, seq_len, genome_fasta):
         for line in f:
             # Get one hot coded sequence
             snp = vcf.SNP(line)
+            if from_ is not None and snp.pos < from_: continue
+            if to_ is not None and snp.pos > to_: break
             seq_vecs, seqs, seq_headers = vcf.snps_seq1([snp], genome_fasta, seq_len)
             seq_vecs = seq_vecs.reshape((seq_vecs.shape[0],4,1,seq_vecs.shape[1]/4))
             # Add to hd5 file
@@ -46,8 +55,11 @@ def main():
     parser.add_option('-o', dest='out_dir', default='sad', help='Output directory for tables and plots [Default: %default]')
     parser.add_option('-l', dest='seq_len', type='int', default=600, help='Sequence length provided to the model [Default: %default]')
     parser.add_option('-t', dest='targets_file', default=None, help='File specifying target indexes and labels in table format')
+    parser.add_option('--from', dest='from_coord', default=None, type='int', help='Process SNPs starting from this coord. Assume VCF sorted.')
+    parser.add_option('--to', dest='to_coord', default=None, type='int', help='Process SNPs ending at this coord. Assume VCF sorted.')
     parser.add_option('--only-generate-inputh5', dest='only_gen_inputh5', default=False, action='store_true', help='Do not run prediction step [Default: %default]')
     parser.add_option('--only-run-pred', dest='only_run_pred', default=False, action='store_true', help='Input h5 file already generated. Only run prediction [Default: %default]')
+    parser.add_option('--only-make-sad', dest='only_make_sad', default=False, action='store_true', help='Input h5 file and model already generated. Only generate output [Default: %default]')
 
     (options,args) = parser.parse_args()
     
@@ -60,11 +72,15 @@ def main():
     if not os.path.isdir(options.out_dir):
         os.mkdir(options.out_dir)
 
+    if options.from_coord is not None and options.to_coord is not None:
+        if options.to_coord <= options.from_coord:
+            parser.error('to_coord must be greater than from_coord')
+
     #################################################################
     # prep SNP sequences
     #################################################################
-    if not options.only_run_pred:
-        prep_snp_seqs(vcf_file, options.out_dir, options.seq_len, options.genome_fasta)
+    if not options.only_run_pred and not options.only_make_sad:
+        prep_snp_seqs(vcf_file, options.out_dir, options.seq_len, options.genome_fasta, from_=options.from_coord, to_=options.to_coord)
 
     if options.only_gen_inputh5:
         sys.exit(0)
@@ -72,14 +88,9 @@ def main():
     #################################################################
     # predict in Torch
     #################################################################
-    message('predict in torch')
-
     model_hdf5_file = '%s/model_out.txt' % options.out_dir
-    cuda_str = ""
-    cmd = 'basset_predict_local.lua -batchsize %s -norm %s %s %s/model_in.h5 %s' % (options.batchsize, cuda_str, model_th, options.out_dir, model_hdf5_file)
-    if subprocess.call(cmd, shell=True):
-        message('Error running basset_predict.lua', 'error')
-
+    if not options.only_make_sad:
+        torch_predict(options.out_dir, options.batchsize, model_th, model_hdf5_file)
 
     #################################################################
     # collect and print SADs
@@ -103,8 +114,13 @@ def main():
     predline = pred_reader.readline().strip()
 
     # Iterate through SNPs
-    while snpline != "":
+    while snpline != "" and predline != "":
         snp = vcf.SNP(snpline, index_snp=options.index_snp, score=options.score)
+        if (options.from_coord is not None and snp.pos < options.from_coord):
+            snpline = snp_reader.readline().strip()
+            continue
+        if (options.to_coord is not None and snp.pos > options.to_coord):
+            break
         ref_pred = np.array([float(p) for p in predline.split()])
         predline = pred_reader.readline().strip()
         for alt_al in snp.alt_alleles:
