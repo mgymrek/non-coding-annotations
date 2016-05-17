@@ -15,6 +15,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import sys
 import tabix
+import pyfasta
 
 def ReverseComplement(nucs):
     newnucs = ""
@@ -37,14 +38,48 @@ def Smooth(data, num):
         newdata.append(np.mean(data[lb:ub]))
     return newdata
         
+def plot_context_count(contextinfo, outprefix, smooth, key):
+    """
+    Plot composite plot of:
+    1. context count
+    2. variant count
+    3. expected count
+    """
+    xcoord = sorted(contextinfo.keys())[1:-1]
+    ycoord1 = [contextinfo[c].get(key, [1, 1, 1])[0] for c in xcoord]
+    ycoord2 = [contextinfo[c].get(key, [1, 1, 1])[1] for c in xcoord]
+    ycoord3 = [ycoord2[i]*1.0/ycoord1[i] for i in range(len(ycoord1))]
+    color = "blue"
+    if IsCpG(key): color="green"
+    fig = plt.figure()
+    fig.set_size_inches((10, 5))
+    ax = fig.add_subplot(311)
+    ax.scatter(xcoord, ycoord1, color=color, alpha=0.2)
+    ax.plot(xcoord, Smooth(ycoord1, smooth), color="red")
+    ax.set_ylabel("Context count")
+    ax = fig.add_subplot(312)
+    ax.scatter(xcoord, ycoord2, color=color, alpha=0.2)
+    ax.plot(xcoord, Smooth(ycoord2, smooth), color="red")
+    ax.set_ylabel("Variant count")
+    ax = fig.add_subplot(313)
+    ax.scatter(xcoord, ycoord3, color=color, alpha=0.2)
+    y1s = Smooth(ycoord1, smooth)
+    y2s = Smooth(ycoord2, smooth)
+    y3s = [y2s[i]*1.0/y1s[i] for i in range(len(y1s))]
+    ax.plot(xcoord, y3s, color="red")
+    ax.set_ylabel("Fraction")
+    ax.set_ylim(bottom=min(ycoord3), top=max(ycoord3))
+    fig.tight_layout()
+    fig.savefig("%s_%s_contextplot.png"%(outprefix, key))
+    plt.close()
 
 def plot_sing_count(locinfo, outprefix, smooth, key):
     """
     Plot composite plot of % singletons and variant count
     """
     xcoord = sorted(locinfo.keys())[1:-1]
-    ycoord = [locinfo[c].get(key, [1, 1])[1]*1.0/sum(locinfo[c].get(key, [1, 1])) for c in xcoord]
-    ycoord2 = [sum(locinfo[c].get(key, [1, 1])) for c in xcoord]
+    ycoord = [locinfo[c].get(key, [1, 1])[1]*1.0/sum(locinfo[c].get(key, [1, 1, 1])[0:2]) for c in xcoord]
+    ycoord2 = [sum(locinfo[c].get(key, [1, 1, 1])[0:2]) for c in xcoord]
     fig = plt.figure()
     fig.set_size_inches((10, 5))
     ax = fig.add_subplot(211)
@@ -68,13 +103,13 @@ def plot_sing_count2(locinfo, outprefix, smooth, key):
     else: rkey = "%s:%s"%(ReverseComplement(key.split(":")[0]), ReverseComplement(key.split(":")[1]))
     print key, rkey
     xcoord = sorted(locinfo.keys())[1:-1]
-    ycoord = [sum(locinfo[c].get(key, [1, 1])) for c in xcoord]
-    ycoord2 = [sum(locinfo[c].get(rkey, [1, 1])) for c in xcoord]
+    ycoord = [sum(locinfo[c].get(key, [1, 1, 1])[0:2]) for c in xcoord]
+    ycoord2 = [sum(locinfo[c].get(rkey, [1, 1, 1])[0:2]) for c in xcoord]
     fig = plt.figure()
     fig.set_size_inches((10, 5))
     ax = fig.add_subplot(211)
     color="blue"
-    if "CG" in key.split(":")[0]: color="green" 
+    if IsCpG(key.split(":")[0]): color="green"
     ax.scatter(xcoord, map(lambda x: math.log10(x), ycoord), color=color, alpha=0.2)
     ax.plot(xcoord, Smooth(map(lambda x: math.log10(x), ycoord), smooth), color="red")
     ax = fig.add_subplot(212)
@@ -86,6 +121,11 @@ def plot_sing_count2(locinfo, outprefix, smooth, key):
     fig.savefig("%s_%s_plot_v2.png"%(outprefix, key))
     plt.close()
 
+def IsCpG(context):
+    # CGX rev is XCG
+    # XCG
+    return "CG" in context
+
 def main():
     parser = argparse.ArgumentParser(__doc__)
     parser.add_argument("--variants", help="File with columns chrom, start, rsid, ref, alt, qual, filter, acount, afreq", required=True, type=str)
@@ -94,13 +134,35 @@ def main():
     parser.add_argument("--out", help="Output prefix", required=True, type=str)
     parser.add_argument("--window", help="Look this many bp up and downstream", required=False, default=1000, type=int)
     parser.add_argument("--smooth", help="Smooth values param", default=5, type=int)
+    parser.add_argument("--remove-cpg", help="Remove CpG sites from variant count plots", action="store_true")
+    parser.add_argument("--mutrates", help="Mutation rate table", type=str, default=None)
+    parser.add_argument("--ref", help="Genome reference fasta", type=str, default="/humgen/atgu1/fs03/wip/gymrek/genomes/Homo_sapiens_assembly19.fasta")
     args = parser.parse_args()
+
+    mutrates = {}
+    if args.mutrates:
+        with open(args.mutrates, "r") as f:
+            for line in f:
+                if "from" in line: continue
+                items = line.strip().split()
+                mutrates["%s:%s"%(items[0], items[1])] = float(items[2])
+                         
+    genome = pyfasta.Fasta(args.ref)
+    # get keys
+    chromToKey = {}
+    for k in genome.keys():
+        chrom = k.split()[0]
+        chromToKey[chrom] = k
 
     locinfo = {} # map pos -> context-> (nonsingcount, singcount)
     coords = range(-1*args.window, args.window+1)
     for c in coords:
         locinfo[c] = {}
-        locinfo[c]["all"] = [0, 0] # pseudocount to each
+        locinfo[c]["all"] = [0, 0]
+    contextinfo = {} # map pos->fromcontext-> (context_count, context_variant_observed, context_variant_expected)
+    for c in coords:
+        contextinfo[c] = {}
+        contextinfo[c]["all"] = [0, 0, 0]
 
     tb = tabix.open(args.variants)
     count = 0
@@ -113,6 +175,22 @@ def main():
             try:
                 windowvars = tb.query(chrom, start-args.window, end+args.window-1)
             except tabix.TabixError: continue
+
+            # Get background context
+            if args.context:
+                for rstart in range(start-args.window, start+args.window):
+                    ref_context = genome[chromToKey[chrom]][(rstart-2):(rstart+1)]
+                    if strand == "-":
+                        ref_context = ReverseComplement(ref_context)
+                        coord = start-rstart
+                    else: coord = rstart-start
+#                    print chrom, start, end, strand, coord, ref_context
+                    contextinfo[coord]["all"][0] += 1
+                    if ref_context not in contextinfo[coord]: contextinfo[coord][ref_context] = [0,0,0]
+                    contextinfo[coord][ref_context][0] += 1
+#                    print coord, contextinfo[coord]
+
+            # Get variants
             for record in windowvars:
                 if record[6] != "PASS" and not args.context: continue
                 rstart = int(record[1])
@@ -121,24 +199,38 @@ def main():
                 if strand == "+":
                     pos = rstart-start
                 else: pos = start-rstart
-                locinfo[pos]["all"][is_sing] = locinfo[pos]["all"][is_sing]+1
                 if args.context:
+                    ref = record[4]
+                    ancestral = record[8]
                     fromcontext = record[9]
                     tocontext = record[10]
                     if strand == "-":
                         fromcontext = ReverseComplement(fromcontext)
                         tocontext = ReverseComplement(tocontext)
+                    if IsCpG(fromcontext) and args.remove_cpg: continue
                     context = "%s:%s"%(fromcontext, tocontext)
                     if context not in locinfo[pos].keys(): locinfo[pos][context] = [0, 0]
                     locinfo[pos][context][is_sing] = locinfo[pos][context][is_sing]+1
-            count = count + 1
+                    if fromcontext not in contextinfo[pos]: contextinfo[pos][fromcontext] = [0,0,0]
+#                    print record, tocontext, pos, contextinfo[pos]
+                    if ancestral != ref: # Correct for if ancestral is not ref
+                        contextinfo[pos][tocontext][0] -= 1
+                        contextinfo[pos][fromcontext][0] += 1
+                    contextinfo[pos][fromcontext][1] += 1
+                    contextinfo[pos]["all"][1] += 1
+                locinfo[pos]["all"][is_sing] = locinfo[pos]["all"][is_sing]+1
+            count = count + 1                       
+            print count
             if count % 10000 == 0: sys.stderr.write("Processed %s loci\n"%count)
     
-    # Add pseoducount
+    # Add pseoducounts
     for c in coords:
         for key in locinfo[c]:
             locinfo[c][key][0] += 1
             locinfo[c][key][1] += 1
+        for key in contextinfo[c]:
+            contextinfo[c][key][0] += 1
+            contextinfo[c][key][1] += 1
 
     # Summarize
     locfile = open("%s_locinfo.tab"%args.out, "w")
@@ -146,13 +238,22 @@ def main():
     for c in coords:
         for key in locinfo[c]:
             keys.add(key)
-            locfile.write("\t".join(map(str, [c, key, locinfo[c][key][0], locinfo[c][key][1], sum(locinfo[c][key]), locinfo[c][key][1]*1.0/sum(locinfo[c][key])]))+"\n")
+            locfile.write("\t".join(map(str, [c, key, locinfo[c][key][0], locinfo[c][key][1], sum(locinfo[c][key][0:2]), locinfo[c][key][1]*1.0/sum(locinfo[c][key][0:2])]))+"\n")
     locfile.close()
+    contextfile = open("%s_contextinfo.tab"%args.out, "w")
+    fromkeys = set()
+    for c in coords:
+        for key in contextinfo[c]:
+            fromkeys.add(key)
+            contextfile.write("\t".join(map(str, [c, key, contextinfo[c][key][0], contextinfo[c][key][1], contextinfo[c][key][1]/contextinfo[c][key][0]]))+"\n")
+    contextfile.close()
 
     # Plot
-    for key in keys:
-        plot_sing_count2(locinfo, args.out, args.smooth, key)
-        plot_sing_count(locinfo, args.out, args.smooth, key)
+#    for key in keys:
+#        plot_sing_count2(locinfo, args.out, args.smooth, key)
+#        plot_sing_count(locinfo, args.out, args.smooth, key)
+    for key in fromkeys:
+        plot_context_count(contextinfo, args.out, args.smooth, key)
 
 main()
     
