@@ -57,6 +57,7 @@ def main():
     parser.add_option('-t', dest='targets_file', default=None, help='File specifying target indexes and labels in table format')
     parser.add_option('--from', dest='from_coord', default=None, type='int', help='Process SNPs starting from this coord. Assume VCF sorted.')
     parser.add_option('--to', dest='to_coord', default=None, type='int', help='Process SNPs ending at this coord. Assume VCF sorted.')
+    parser.add_option('--chrom', dest='chrom', default=None, type='str', help='Which chromosome is being processed.')
     parser.add_option('--only-generate-inputh5', dest='only_gen_inputh5', default=False, action='store_true', help='Do not run prediction step [Default: %default]')
     parser.add_option('--only-run-pred', dest='only_run_pred', default=False, action='store_true', help='Input h5 file already generated. Only run prediction [Default: %default]')
     parser.add_option('--only-make-sad', dest='only_make_sad', default=False, action='store_true', help='Input h5 file and model already generated. Only generate output [Default: %default]')
@@ -116,6 +117,7 @@ def main():
     # Iterate through SNPs
     while snpline != "" and predline != "":
         snp = vcf.SNP(snpline, index_snp=options.index_snp, score=options.score)
+        if options.chrom is not None and snp.chrom != options.chrom: continue
         if (options.from_coord is not None and snp.pos < options.from_coord):
             snpline = snp_reader.readline().strip()
             continue

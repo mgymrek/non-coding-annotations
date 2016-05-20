@@ -57,6 +57,7 @@ def plot_context_count(contextinfo, outprefix, smooth, key):
     ax.scatter(xcoord, ycoord1, color=color, alpha=0.2)
     ax.plot(xcoord, Smooth(ycoord1, smooth), color="red")
     ax.set_ylabel("Context count")
+    ax.set_title(key)
     ax = fig.add_subplot(312)
     ax.scatter(xcoord, ycoord2, color=color, alpha=0.2)
     ax.plot(xcoord, Smooth(ycoord2, smooth), color="red")
@@ -67,10 +68,76 @@ def plot_context_count(contextinfo, outprefix, smooth, key):
     y2s = Smooth(ycoord2, smooth)
     y3s = [y2s[i]*1.0/y1s[i] for i in range(len(y1s))]
     ax.plot(xcoord, y3s, color="red")
+    ax.axhline(np.mean(ycoord3), linestyle="dashed", color="black", lw=2)
     ax.set_ylabel("Fraction")
     ax.set_ylim(bottom=min(ycoord3), top=max(ycoord3))
     fig.tight_layout()
     fig.savefig("%s_%s_contextplot.png"%(outprefix, key))
+    plt.close()
+
+def GetObserved(info, cpg=True):
+    obs = 0
+    keys = [item for item in info.keys() if item != "all"]
+    if not cpg:
+        keys = [item for item in keys if not IsCpG(item)]
+    for k in keys:
+        obs += info[k][1]
+    return obs
+
+def GetExpected(info, mutrates, cpg=True):
+    exp = 0
+    keys = [item for item in info.keys() if item != "all"]
+    if not cpg:
+        keys = [item for item in keys if not IsCpG(item)]
+    for k in keys:
+        mutkeys = [item for item in mutrates.keys() if item.split(":")[0] == k]
+        m = sum([mutrates[mk] for mk in mutkeys])
+        count = info[k][0]
+        exp += count*m
+    return exp
+
+def plot_exp_count(contextinfo, mutrates, outprefix, smooth):
+    xcoord = sorted(contextinfo.keys())[1:-1]
+    yobs = [contextinfo[c].get("all", [1, 1, 1])[1] for c in xcoord]
+    yexp = [GetExpected(contextinfo[c], mutrates) for c in xcoord]
+    yobs_nocpg = [GetObserved(contextinfo[c], cpg=False) for c in xcoord]
+    yexp_nocpg = [GetExpected(contextinfo[c], mutrates, cpg=False) for c in xcoord]
+    fig = plt.figure()
+    fig.set_size_inches((10, 10))
+    ax = fig.add_subplot(611)
+    ax.scatter(xcoord, yobs, color="blue")
+    ax.plot(xcoord, Smooth(yobs, smooth), color="red")
+    ax.set_ylabel("Observed")
+    ax = fig.add_subplot(612)
+    ax.scatter(xcoord, yexp, color="blue")
+    ax.set_ylim(bottom=min(yexp), top=max(yexp))
+    ax.plot(xcoord, Smooth(yexp, smooth), color="red")
+    ax.set_ylabel("Expected")
+    ax = fig.add_subplot(613)
+    yfrac = np.log([yobs[i]/yexp[i]*np.mean(yexp)/np.mean(yobs) for i in range(len(yobs))])/np.log(2)
+    ax.scatter(xcoord, yfrac, color="blue")
+    ax.plot(xcoord, Smooth(yfrac, smooth), color="red")
+    ax.axhline(0)
+    ax.set_ylabel("Ratio")
+    ax = fig.add_subplot(614)
+    ax.scatter(xcoord, yobs_nocpg, color="blue")
+    ax.set_ylim(bottom=min(yobs_nocpg), top=max(yobs_nocpg))
+    ax.plot(xcoord, Smooth(yobs_nocpg, smooth), color="red")
+    ax.set_ylabel("Obs - no cpg")
+    ax = fig.add_subplot(615)
+    ax.scatter(xcoord, yexp_nocpg, color="blue")
+    ax.set_ylim(bottom=min(yexp_nocpg), top=max(yexp))
+    ax.plot(xcoord, Smooth(yexp_nocpg, smooth), color="red")
+    ax.set_ylim(bottom=min(yexp_nocpg), top=max(yexp_nocpg))
+    ax.set_ylabel("Exp - no cpg")
+    ax = fig.add_subplot(616)
+    yfrac_nocpg = np.log([yobs_nocpg[i]/yexp_nocpg[i]*np.mean(yexp_nocpg)/np.mean(yobs_nocpg) for i in range(len(yobs_nocpg))])/np.log(2)
+    ax.scatter(xcoord, yfrac_nocpg, color="blue")
+    ax.plot(xcoord, Smooth(yfrac_nocpg, smooth), color="red")
+    ax.axhline(0)
+    ax.set_ylabel("Ratio")
+    fig.tight_layout()
+    fig.savefig("%s_obsexp.png"%outprefix)
     plt.close()
 
 def plot_sing_count(locinfo, outprefix, smooth, key):
@@ -222,7 +289,7 @@ def main():
             count = count + 1                       
             print count
             if count % 10000 == 0: sys.stderr.write("Processed %s loci\n"%count)
-    
+
     # Add pseoducounts
     for c in coords:
         for key in locinfo[c]:
@@ -252,6 +319,7 @@ def main():
 #    for key in keys:
 #        plot_sing_count2(locinfo, args.out, args.smooth, key)
 #        plot_sing_count(locinfo, args.out, args.smooth, key)
+    plot_exp_count(contextinfo, mutrates, args.out, args.smooth)
     for key in fromkeys:
         plot_context_count(contextinfo, args.out, args.smooth, key)
 
