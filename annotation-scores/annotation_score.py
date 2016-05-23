@@ -22,13 +22,19 @@ def LoadSNPs(snpfile):
             chrom, start, end, strand = line.strip().split()[0:4]
             start = int(start)
             end = int(end)
-            snps.append((chrom, start, end, strand))
+            try:
+                alleles = line.strip().split()[4]
+            except: alleles = None
+            snps.append((chrom, start, end, strand, alleles))
     return snps
 
 def GetCaseControlACCounts(snp, args):
     controlgen = ControlGenerator(snp, args.ref, args.vcf, args.restrict, \
                                       args.num_ctrls, args.window, args.match_context)
     case_ac = controlgen.GetCaseAC()
+    if case_ac == -1:
+#        print "Skipping %s, variable but not right allele"%str(snp)
+        return None, None
     ctrl_ac = controlgen.GetControlACs()
     if len(ctrl_ac) < args.num_ctrls:
         sys.stderr.write("Could not generate enough controls for %s\n"%str(snp))
@@ -59,6 +65,15 @@ class ControlGenerator:
             records = list(self.vcf.query(*snp[0:3]))
             if len(records)==0: return 0
             record = list(records)[0]
+            if snp[4] is not None:
+                ref, alt = snp[4].split("/")
+                possible_alt = alt.split(",")
+                snpref, snpalt = record[3], record[4]
+                if snpref != ref:
+                    sys.stderr.write("ERROR: reference allele doesn't match\nsnp=%s\nrecord=%s"%(str(snp), str(record)))
+                    sys.exit(1)
+                if snpalt not in possible_alt: return -1 # don't count this snp. TODO how to handle?
+#                print record, snp
             ac = int(record[7])
             return ac
         except tabix.TabixError:
@@ -91,7 +106,7 @@ class ControlGenerator:
     def IsRestricted(self, csnp):
         if self.restrict is None: return False
         try:
-            records = list(self.restrict.query(*csnp))
+            records = list(self.restrict.query(*csnp[0:3]))
             return len(records) > 0
         except tabix.TabixError: return False
 
@@ -103,7 +118,7 @@ class ControlGenerator:
         end = self.snp[2] + self.window
         # Get eligible candidates
         for pos in range(start, end+1):
-            csnp = (chrom, pos, pos+1)
+            csnp = (chrom, pos, pos+1, None, None)
             # Check if resricted
             if self.IsRestricted(csnp):
                 continue
@@ -116,6 +131,7 @@ class ControlGenerator:
         return controls
 
     def GetControlACs(self):
+        if self.num_ctrls == 0: return []
         # Generate all possible controls
         controls = self.GenerateMatchedControls()
         # Randomly choose
@@ -163,7 +179,7 @@ def main():
     ctrl_counts = [] # case snp -> count
     counts = joblib.Parallel(n_jobs=args.numproc, verbose=5)(joblib.delayed(GetCaseControlACCounts)(snps[i], args) for i in range(min([args.max_snps, len(snps)])))
     for i in range(len(counts)):
-        if counts[0] is None: continue
+        if counts[i][0] is None: continue
         case_counts.append(counts[i][0])
         ctrl_counts.append(counts[i][1])
 
@@ -179,12 +195,23 @@ def main():
         case_counts_summary += x
         ctrl_counts_summary += y
     res = scipy.stats.chisquare(case_counts_summary, ctrl_counts_summary*sum(case_counts_summary)/sum(ctrl_counts_summary))
+    # Get % singletons and % variable sites
+    perc_sing = case_counts_summary[1]*1.0/sum(case_counts_summary[1:])
+    perc_var = sum(case_counts_summary[1:])*1.0/sum(case_counts_summary)
+    try:
+        perc_sing_ctrl = ctrl_counts_summary[1]*1.0/sum(ctrl_counts_summary[1:])
+    except: perc_sing_ctrl = -1
+    try:
+        perc_var_ctrl = sum(ctrl_counts_summary[1:])*1.0/sum(ctrl_counts_summary)
+    except: perc_var_ctrl = -1
     if args.out is None:
         f = sys.stdout
     else: f = open(args.out, "w")
     f.write("\t".join(map(str, [sum(case_counts_summary), sum(ctrl_counts_summary), \
+                                    perc_sing, perc_var, perc_sing_ctrl, perc_var_ctrl, \
                                     ",".join(map(str, case_counts_summary)), ",".join(map(str, ctrl_counts_summary)), \
                                     res.statistic, res.pvalue]))+"\n")
+    f.close()
 
 if __name__ == "__main__":
     main()
